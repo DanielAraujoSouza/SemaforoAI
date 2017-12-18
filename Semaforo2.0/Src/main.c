@@ -56,7 +56,7 @@ long uss1_fluxo = 0; //semaforo 1
 long uss2_fluxo = 0; // semafor 2
 //distancia padrao sem carro
 int uss1_calibragem = 1000;
-int uss2_calibragem = 2000;
+int uss2_calibragem = 700;
 //informa se carro ja passou pelo sensor
 int uss1_resetado = 1;
 int uss2_resetado = 1;
@@ -72,6 +72,7 @@ int uss2_seg_inativo = 0;
 int tm_frequencia = 10;
 //contagem de tempo
 int count_time = 0;
+int count_time_seg = 0;
 //semaforo fechado 1 = s1 e 2 = s2
 int sem_fechado = 1;
 /* USER CODE END PV */
@@ -144,13 +145,13 @@ int main(void)
 	HAL_GPIO_WritePin(GPIOB,GPIO_PIN_5,GPIO_PIN_RESET); //P2G
   while (1)
   {
-
+	  //faz a troca dos semaforos
 	  if(sem_fechado != fecha_sem){
 		  fecha_semaforo(fecha_sem);
 		  count_time = 0;
 	  }
 	  //Breakpoint "%d - USS1 d-%d f-%d b-%d - USS2 d-%d f-%d b-%d \n",count_time,uss1_delay,uss1_fluxo,btn_s1,uss2_delay,uss2_fluxo,btn_s2
-	  // "%d USS1 I-%d b-%d USS2 I-%d b-%d - fechado %d - deve_fechar %d \n",count_time,uss1_ciclos_inativo,btn_s1,uss2_ciclos_inativo,btn_s1,sem_fechado,fecha_sem
+	  //"%d USS1 I-%d b-%d USS2 I-%d b-%d - fechado %d - deve_fechar %d \n",count_time,uss1_ciclos_inativo,btn_s1,uss2_ciclos_inativo,btn_s2,sem_fechado,fecha_sem
 	  HAL_Delay(500);
   /* USER CODE END WHILE */
 
@@ -233,95 +234,148 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 }
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-    if (htim->Instance==TIM3) //check if the interrupt comes from TIM3
+    if (htim->Instance==TIM3) //Interrupção por tempo, 100ms
     {
+    	count_time_seg = count_time/tm_frequencia;
+    	//Calcula a largura do pulso de echo do sensor 1
     	uss1_delay=HAL_TIM_ReadCapturedValue(&htim2, TIM_CHANNEL_4) - HAL_TIM_ReadCapturedValue(&htim2, TIM_CHANNEL_3);
-    	if(uss1_delay > 0 && uss1_delay < 1600){
+    	//regulagem contra ruido
+    	if(uss1_delay > 0 && uss1_delay < 1400){
+    		//verifica se tem carro atravez da calibragem(delay normal sem carro)
 			if(uss1_delay < uss1_calibragem){
 				if(uss1_resetado == 1){
 					uss1_fluxo++;
 				}
+				//informa que o sensor ainda nao voltou para distancia padrão
 				uss1_resetado = 0;
 				uss1_ciclos_inativo = 0;
 			}
 			else{
+				//informa que o sensor voltou para distancia padrão
 				uss1_resetado = 1;
+				//contador de ciclos inativos incrementado
 				uss1_ciclos_inativo++;
 			}
     	}
+    	//Calcula a largura do pulso de echo do sensor 2
     	uss2_delay=HAL_TIM_ReadCapturedValue(&htim2, TIM_CHANNEL_1) - HAL_TIM_ReadCapturedValue(&htim2, TIM_CHANNEL_2);
-    	if(uss2_delay > 0 && uss2_delay < 6700){
+    	//regulagem contra ruido
+    	if(uss2_delay > 0 && uss2_delay < 900){
+    		//verifica se tem carro atravez da calibragem(delay normal sem carro)
 			if(uss2_delay < uss2_calibragem){
 				if(uss2_resetado == 1){
 					uss2_fluxo++;
 				}
+				//informa que o sensor ainda nao voltou para distancia padrão
 				uss2_resetado = 0;
 				uss2_ciclos_inativo = 0;
 			}
 			else{
+				//informa que o sensor voltou para distancia padrão
 				uss2_resetado = 1;
+				//contador de ciclos inativos incrementado
 				uss2_ciclos_inativo++;
 			}
     	}
+    	//Tempo de inatividade do sensor 1 em segundos
     	uss1_seg_inativo = uss1_ciclos_inativo/tm_frequencia;
+    	//Tempo de inatividade do sensor 1 em segundos
     	uss2_seg_inativo = uss2_ciclos_inativo/tm_frequencia;
-    	if(btn_s2 > 0){
-    		if(sem_fechado == 1){
-				if(uss2_seg_inativo > 5 && btn_s1 == 0){
-					fecha_sem = 2;
-				}
-				else if(count_time > 150){
-					fecha_sem = 2;
-				}
-			}
-		}
-    	else if(HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_11)){
-			btn_s2++;
-		}
 
-    	if(btn_s1 > 0){
-    		if(sem_fechado == 2){
-				if(uss1_seg_inativo > 5 && btn_s2 == 0){
-					fecha_sem = 1;
-				}
-				else if(count_time > 150){
-					fecha_sem = 1;
+    	//Botao de pedestre do semaforo 1 foi pressionado
+		if(btn_s1 > 0){
+			//semaforo 1 esta fechado, ou seja, sinal de pedestre do semaforo 2
+			//esta fechado.
+			if(sem_fechado == 2){
+				//Sensor do semaforo 1 nao detecta carro a mais de 5 segundos
+				//entao fecha o semaforo 2 para travessia de pedestre.
+				if(uss1_seg_inativo >= 5){
+					//A condição btn_s2 == 0 faz com que haja tempo minimo para travessia
+					//dos pedestres do semaforo 2.
+					if(btn_s2 == 0){
+						fecha_sem = 1;
+					}
+					//Tempo maximo de espera 15 segundos
+					else if(count_time_seg >= 15){
+						fecha_sem = 1;
+					}
 				}
 			}
 		}
+		//Se botão de pedestre nao tiver sido pressionado, entao ler a entrada.
 		else if(HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_7)){
 			btn_s1++;
 		}
-    	if(count_time > 250){
-    		if(sem_fechado == 1 && uss1_seg_inativo <= 5){
-				fecha_sem = 2;
-			}
-    		else if(sem_fechado == 2 && uss2_seg_inativo <= 5){
-				fecha_sem = 1;
-			}
-    	}
-    	else if(count_time > 750){
+
+    	//Botao de pedestre do semaforo 2 foi pressionado
+    	if(btn_s2 > 0){
+    		//semaforo 1 esta fechado, ou seja, sinal de pedestre do semaforo 2
+    		//esta fechado.
     		if(sem_fechado == 1){
+    			//Sensor do semaforo 2 nao detecta carro a mais de 5 segundos
+    			//entao fecha o semaforo 2 para travessia de pedestre.
+				if(uss2_seg_inativo >= 5){
+					//A condição btn_s1 == 0 faz com que haja tempo minimo para travessia
+					//dos pedestres do semaforo 1.
+					if(btn_s1 == 0){
+						fecha_sem = 2;
+					}
+					//Tempo maximo de espera 15 segundos
+					else if(count_time_seg >= 15){
+						fecha_sem = 2;
+					}
+				}
+			}
+		}
+    	//Se botão de pedestre nao tiver sido pressionado, entao ler a entrada.
+    	else if(HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_11)){
+			btn_s2++;
+		}
+    	//Tempo máximo de um semaforo aberto 75seg(3 cliclos comuns de 25seg)
+		if(count_time_seg >= 75){
+			//Semaforo 1 fechado então fecha semaforo 2
+			if(sem_fechado == 1){
 				fecha_sem = 2;
 			}
+			//Semaforo 2 fechado então fecha semaforo 1
 			else{
 				fecha_sem = 1;
 			}
+		}
+    	//tempo normal de semaforo atingido 25seg
+		else if(count_time_seg >= 25){
+    		//Semaforo 1 fechado e seu senssor detectou carros menos de 5 seg
+    		//Ou botão do semaforo 2 foi pressionado.
+    		if((sem_fechado == 1 && uss1_seg_inativo <= 5) || btn_s2 > 0){
+				fecha_sem = 2;
+			}
+    		//Semaforo 2 fechado e seu senssor detectou carros menos de 5 seg
+			//Ou botão do semaforo 1 foi pressionado.
+    		else if((sem_fechado == 2 && uss2_seg_inativo <= 5) || btn_s1 > 0){
+				fecha_sem = 1;
+			}
     	}
-    	if(sem_fechado == 1 && uss1_seg_inativo <= 5 && uss2_seg_inativo > 5 && count_time >50){
+
+    	//verifica inatividade no semaforo aberto
+    	if(sem_fechado == 1 && uss1_seg_inativo <= 5 && uss2_seg_inativo > 5 && count_time_seg >5 && (btn_s1 == 0 || count_time_seg > 150)){
     		fecha_sem = 2;
     	}
-    	else if(sem_fechado == 2 && uss2_seg_inativo <= 5 && uss1_seg_inativo > 5 && count_time >50){
+    	else if(sem_fechado == 2 && uss2_seg_inativo <= 5 && uss1_seg_inativo > 5 && count_time_seg >5 && (btn_s2 == 0 || count_time_seg > 150)){
     		fecha_sem = 1;
     	}
+    	//contador de ciclos
     	count_time++;
+
+    	//Envia pulso de trigger para os sensores
     	HAL_GPIO_WritePin(GPIOA,GPIO_PIN_5,GPIO_PIN_SET); //USS1 trigger
 		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_4,GPIO_PIN_SET); //USS2 trigger
+		//delay de ativação
 		Delay_Us(10);
+		//Interrompe o pulso de trigger para os sensores
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_5,GPIO_PIN_RESET);//USS1 trigger
 		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_4,GPIO_PIN_RESET);//USS2 trigger*/
+		//Reinicia o contador interno do timer 2
 		__HAL_TIM_SET_COUNTER(&htim2,0);
-		//conta os ciclos de echo para calcular a distancia
     }
 }
 uint32_t getUs(void) {
@@ -340,38 +394,11 @@ void Delay_Us(uint32_t micros) {
 	while (getUs()-start < (uint32_t) micros);
 }
 void fecha_semaforo(int semaforo){
-	if(semaforo == 2){
-		//5 segundos de amarelo
-		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,GPIO_PIN_SET); //S2Y
-		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_7,GPIO_PIN_RESET); //S2G
-		for(int i = 0; i < 5; i++){
-			HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,GPIO_PIN_SET); //P1R
-			HAL_GPIO_WritePin(GPIOB,GPIO_PIN_0,GPIO_PIN_SET); //BUZ
-			HAL_Delay(500);
-			HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,GPIO_PIN_RESET); //P1R
-			HAL_GPIO_WritePin(GPIOB,GPIO_PIN_0,GPIO_PIN_RESET); //BUZ
-			HAL_Delay(500);
-		}
-		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_2,GPIO_PIN_RESET); //S1G
-		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,GPIO_PIN_SET); //P1R
-		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_4,GPIO_PIN_RESET); //P1G
-		btn_s1 = 0;
-
-		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,GPIO_PIN_SET); //S2R
-		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,GPIO_PIN_RESET); //S2Y
-
-		HAL_Delay(2000);
-
-		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_0,GPIO_PIN_RESET); //S1R
-		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_2,GPIO_PIN_SET); //S1G
-
-		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_6,GPIO_PIN_RESET); //P2R
-		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_5,GPIO_PIN_SET); //P2G
-		sem_fechado = 2;
-	}
-	else if(semaforo == 1){
+	if(semaforo == 1){
+		//5 segundos de transição do verde para vermelho
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_1,GPIO_PIN_SET); //S1Y
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_2,GPIO_PIN_RESET); //S1G
+		//Sinal de aviso(visual e sonoro) para pedestres
 		for(int i = 0; i < 5; i++){
 			HAL_GPIO_WritePin(GPIOB,GPIO_PIN_6,GPIO_PIN_SET); //P2R
 			HAL_GPIO_WritePin(GPIOB,GPIO_PIN_0,GPIO_PIN_SET); //BUZ
@@ -383,19 +410,57 @@ void fecha_semaforo(int semaforo){
 		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_7,GPIO_PIN_RESET); //S2G
 		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_6,GPIO_PIN_SET); //P2R
 		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_5,GPIO_PIN_RESET); //P2G
+		//reseta contador de pedestre do semaforo que vai abrir(semaforo 2)
 		btn_s2 = 0;
 
+		//Fecha semaforo 1
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_0,GPIO_PIN_SET); //S1R
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_1,GPIO_PIN_RESET); //S1Y
 
-		HAL_Delay(2000);
+		//delay com ambos os semaforos em vermelho
+		HAL_Delay(1500);
 
+		//Abre o semaforo 2
 		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,GPIO_PIN_RESET); //S2R
 		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_7,GPIO_PIN_SET); //S2G
 
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,GPIO_PIN_RESET); //P1R
 		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_4,GPIO_PIN_SET); //P1G
 		sem_fechado = 1;
+	}
+	else if(semaforo == 2){
+		//5 segundos de transição do verde para vermelho
+		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,GPIO_PIN_SET); //S2Y
+		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_7,GPIO_PIN_RESET); //S2G
+		//Sinal de aviso(visual e sonoro) para pedestres
+		for(int i = 0; i < 5; i++){
+			HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,GPIO_PIN_SET); //P1R
+			HAL_GPIO_WritePin(GPIOB,GPIO_PIN_0,GPIO_PIN_SET); //BUZ
+			HAL_Delay(500);
+			HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,GPIO_PIN_RESET); //P1R
+			HAL_GPIO_WritePin(GPIOB,GPIO_PIN_0,GPIO_PIN_RESET); //BUZ
+			HAL_Delay(500);
+		}
+		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_2,GPIO_PIN_RESET); //S1G
+		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,GPIO_PIN_SET); //P1R
+		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_4,GPIO_PIN_RESET); //P1G
+		//reseta contador de pedestre do semaforo que vai abrir(semaforo 1)
+		btn_s1 = 0;
+
+		//Fecha semaforo 2
+		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,GPIO_PIN_SET); //S2R
+		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,GPIO_PIN_RESET); //S2Y
+
+		//delay com ambos os semaforos em vermelho
+		HAL_Delay(1500);
+
+		//Abre semaforo 1
+		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_0,GPIO_PIN_RESET); //S1R
+		HAL_GPIO_WritePin(GPIOA,GPIO_PIN_2,GPIO_PIN_SET); //S1G
+
+		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_6,GPIO_PIN_RESET); //P2R
+		HAL_GPIO_WritePin(GPIOB,GPIO_PIN_5,GPIO_PIN_SET); //P2G
+		sem_fechado = 2;
 	}
 
 }
